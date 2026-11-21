@@ -174,4 +174,31 @@ function foto(){$(`${hd()}<span class="tag">FOTO TEKSHIRUV</span><h1 style="font
 function an(i){const f=i.files[0];if(!f)return;const im=new Image();im.onload=()=>{const c=document.getElementById("cv"),w=240,h=Math.round(im.height*w/im.width);c.width=w;c.height=h;const x=c.getContext("2d");x.drawImage(im,0,0,w,h);const d=x.getImageData(0,0,w,h).data;let s=0;
 for(let k=0;k<d.length;k+=4){const mx=Math.max(d[k],d[k+1],d[k+2]),mn=Math.min(d[k],d[k+1],d[k+2]);if(mn>165&&(mx-mn)/mx<.16)s++}
 const p=Math.round(s/(w*h)*100),m=p<10?["Past","tuz deyarli yoʻq",1]:p<30?["Oʻrta","yengil shoʻr yuvish kerak",3]:["Yuqori","zudlik bilan shoʻr yuvish va drenaj tekshiruvi kerak",9];
-c.style.display="block";document.getElementById("ph").style.displ
+c.style.display="block";document.getElementById("ph").style.display="none";document.getElementById("rs").innerHTML=`<h2>Tuz poʻstlogʻi: ~${p}%</h2><span class="chip" style="background:${lv(m[2])[1]}">${m[0]}</span><p class="mut">${m[1]}. Taxminiy natija; EC-metr bilan tasdiqlang.</p>`};im.src=URL.createObjectURL(f)}
+function hisob(){const f=S.f;
+window.calc=()=>{const ga=+document.getElementById("ga").value||0,mm=+document.getElementById("mm").value||0;document.getElementById("o").textContent=Math.round(mm*ga*10).toLocaleString("uz")+" m³";
+[80,100,120].forEach(v=>document.getElementById("s"+v).innerHTML=Math.round(v*ga*10).toLocaleString("uz")+" m³<div class='mut'>"+v+" mm</div>");
+const k=document.getElementById("ck").value,m=MH[k],e=+document.getElementById("ee").value||0;document.getElementById("lo").textContent="~"+Math.max(0,Math.min(100,Math.round(m[1]*(e-m[0]))))+"% hosil yoʻqotilishi"};
+$(`${hd()}<span class="tag">SUV HISOBI</span><h1 style="font-size:26px">Shoʻr yuvish ssenariylari</h1>
+<div class="card"><label>MAYDON (ga)</label><input id="ga" type="number" value="${f.ga}" oninput="calc()"><label>SUV QATLAMI (mm)</label><input id="mm" type="number" value="100" oninput="calc()"></div>
+<div class="hero c"><div class="cap" style="color:#9fc5ae">ASOSIY SSENARIY · 1 mm × ga × 10</div><div class="big" id="o"></div></div>
+<div class="row c"><div class="box" id="s80"></div><div class="box" id="s100" style="background:#dcebdf"></div><div class="box" id="s120"></div></div>
+<div class="card" style="margin-top:14px"><h2 style="margin-top:0">Hosil yoʻqotilishi (FAO)</h2><label>EKIN</label><select id="ck" onchange="calc()">${Object.keys(MH).map(c=>`<option ${c==f.c?"selected":""}>${c}`).join("")}</select><label>TUPROQ EC (dS/m)</label><input id="ee" type="number" step=".1" value="${f.ec}" oninput="calc()"><div class="hero c" style="font-size:20px;font-weight:800" id="lo"></div><p class="mut">Maas–Hoffman: Y = 100 − b·(EC − a). Narx hisobi (soʻm) — tez kunda.</p></div>`);calc()}
+function ai(q){const f=S.f,l=lv(f.ec)[0].toLowerCase(),t=q.toLowerCase();
+if(/yuv|shor|shoʻr|sho‘r/.test(t))return`${f.n}: EC ${f.ec} dS/m (${l}). ${f.ec>=6?"120 mm":f.ec>=2?"100 mm":"qoʻshimcha"} suv bilan yuvish: ${Math.round((f.ec>=6?120:100)*f.ga*10).toLocaleString("uz")} m³. Drenaj ochiqligini tekshiring.`;
+if(/hosil|yoʻq|yoq|zarar/.test(t)){const m=MH[f.c]||[7,5];return`${f.c} uchun taxminiy hosil yoʻqotilishi ~${Math.max(0,Math.round(m[1]*(f.ec-m[0])))}%. Hisob bandida boshqa ekin bilan solishtiring.`}
+if(/sugʻor|sug‘or|suv/.test(t))return"Shoʻr maydonda kam miqdorda, tez-tez sugʻorish yaxshi: ildiz zonasida tuz toʻplanmaydi. Ertalab yoki kechqurun sugʻoring.";
+if(/ekin|arpa|paxta|bugʻdoy/.test(t))return f.ec>=6?"EC yuqori: arpa va paxta nisbatan chidamli, bugʻdoy zaiflashadi.":"Bu EC darajasida paxta va bugʻdoy ekish mumkin.";
+return`${f.n} (${f.c}, ${f.ga} ga): EC ${f.ec} dS/m, shoʻrlanish ${l}. Yuvish, hosil yoʻqotilishi yoki sugʻorish haqida soʻrang.`}
+function agro(){const q=["Shoʻr yuvish qancha suv kerak?","Hosil qancha yoʻqoladi?","Qachon sugʻorish kerak?"];
+$(`${hd()}<div class="card row" style="align-items:center"><div class="lg" style="flex:0"><i>${sv("leaf")}</i></div><div><b>Shoʻr Agronom</b><div class="mut">${S.f.n} natijalarini biladi</div></div><span class="tag" style="flex:0">FREE</span></div>
+<div id="ch"><div class="m a">Assalomu alaykum! ${S.f.n} maydoningiz (EC ${S.f.ec} dS/m) boʻyicha nima soʻraysiz?</div>${S.chat.map(m=>`<div class="m ${m[0]}">${m[1]}</div>`).join("")}</div>
+<div class="qs" style="margin-top:10px">${q.map(x=>`<button onclick="say(this.textContent)">${x}</button>`).join("")}</div><div class="row" style="margin-top:6px"><input id="qq" placeholder="Savol yozing…" style="margin:0"><button class="btn" style="flex:0 0 90px;margin:0" onclick="say(document.getElementById('qq').value)">Yuborish</button></div><p class="mut">Demo rejim: tayyor qoidalar. Haqiqiy AI keyingi bosqichda.</p>`)}
+function say(q){q=(q||"").trim();if(!q)return;S.chat.push(["u",q],["a",ai(q)]);agro();document.getElementById("v").scrollTop=1e5}
+function notif(){const P=["Sunʼiy yoʻldosh monitoringi (har 5 kun)","Shoʻrlanish tarixi (2017–)","NDVI ekin salomatligi xaritasi","Sugʻorish kalendari","Shoʻr yuvish rejalashtirgichi","Hosil yoʻqotilishi (soʻmda)","Chang boʻroni va sovuq ogohlantirishi","PDF hisobot"];
+$(`<div class="hd"><button class="bl" onclick="go(0)">‹</button><div class="lg"><span>PLATFORMA</span></div><span style="width:40px"></span></div><span class="tag">REJALASHTIRILGAN</span><h1 style="font-size:26px">Bildirishnomalar</h1><p class="mut">Bu modul hozircha namuna. Ishlaydigan xabarlar Pro versiyada.</p>
+<div class="card" style="padding:4px 16px">${["Sugʻorish eslatmalari","Eskirgan EC oʻlchovi","Sensor va ob-havo ogohlantirishlari"].map(x=>`<div class="soon"><b>${x}</b><span class="tag">Tez kunda</span></div>`).join("")}</div>
+<h2>Pro modullar</h2><div class="card" style="padding:4px 16px">${P.map(x=>`<div class="soon"><span>${x}</span><span class="tag">Tez kunda</span></div>`).join("")}</div>
+<div class="hero"><b style="font-size:20px">FREE</b><div style="color:#b9d4c4;font-size:13px">Dala tekshiruvi, surat tahlili, agronom chat, 1 ta maydon</div></div>`)}
+render();
+</script></body></html>
