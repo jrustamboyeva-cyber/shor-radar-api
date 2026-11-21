@@ -45,6 +45,7 @@ def level(si, ndvi):
 
 @app.get("/")
 def root():
+    return {"ok": True, "service": "Shor Radar API"}
     return HTMLResponse(INDEX)
 
 @app.get("/health")
