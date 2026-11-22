@@ -1,8 +1,10 @@
 import os, time, datetime as dt
 import base64, io
 import httpx
+
 from history import router as history_router
 from chat import router as chat_router
+
 from PIL import Image
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
