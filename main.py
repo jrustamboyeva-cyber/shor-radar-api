@@ -1,6 +1,8 @@
 import os, time, datetime as dt
 import base64, io
 import httpx
+from history import router as history_router
+from chat import router as chat_router2)
 from PIL import Image
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +14,8 @@ STAT_URL = "https://sh.dataspace.copernicus.eu/api/v1/statistics"
 
 app = FastAPI(title="Shor Radar API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.include_router(history_router)
+app.include_router(chat_router)
 _tok = {"v": None, "exp": 0}
 _cache = {}
 
