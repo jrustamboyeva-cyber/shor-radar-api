@@ -103,7 +103,7 @@ async def chat(req: Request, payload: dict = Body(...)):
         timeout = httpx.Timeout(connect=10.0, read=55.0, write=15.0, pool=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
-                GEMINI_URL,
+                INTERACTIONS_URL,
                 headers={
                     "x-goog-api-key": KEY,
                     "Content-Type": "application/json",
