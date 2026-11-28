@@ -47,6 +47,14 @@ async def chat(req: Request, payload: dict = Body(...)):
     if not question:
         raise HTTPException(400, "Savol bo'sh")
 
+    # Count attempts before calling the paid upstream API, including failed attempts.
+    if len(_cnt) > 10000:
+        today_suffix = time.strftime("%Y%m%d")
+        for key in list(_cnt):
+            if not key.endswith(today_suffix):
+                _cnt.pop(key, None)
+    _cnt[day_key] = _cnt.get(day_key, 0) + 1
+
     language = str(payload.get("language", "uz")).lower().strip()
     if language not in LANGUAGE_INSTRUCTIONS:
         language = "uz"
@@ -176,5 +184,4 @@ async def chat(req: Request, payload: dict = Body(...)):
     if not answer:
         raise HTTPException(502, "Gemini bo'sh javob qaytardi. Boshqacha savol berib ko'ring.")
 
-    _cnt[day_key] = _cnt.get(day_key, 0) + 1
-    return {"answer": answer, "left": LIMIT - _cnt[day_key]}
+    return {"answer": answer, "left": max(0, LIMIT - _cnt[day_key])}

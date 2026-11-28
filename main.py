@@ -6,7 +6,7 @@ from history import router as history_router
 from chat import router as chat_router
 
 from PIL import Image
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 CID = os.environ.get("CDSE_CLIENT_ID", "")
@@ -20,6 +20,8 @@ app.include_router(history_router)
 app.include_router(chat_router)
 _tok = {"v": None, "exp": 0}
 _cache = {}
+_verify_attempts = {}
+VERIFY_COOLDOWN_SECONDS = 30
 
 EVALSCRIPT = """//VERSION=3
 function setup() {
@@ -95,9 +97,21 @@ def integration_health():
         "note": "configured faqat sozlama mavjudligini bildiradi. Tashqi xizmatning ishlashi ushbu endpointda jonli tekshirilmaydi. Ma'lumotlar bazasi mavjudligi ham ma'lumotlar saqlanib qolishini kafolatlamaydi."
     }
 
-@app.api_route("/health/verify", methods=["GET", "POST"])
-async def verify_integrations():
-    """On-demand upstream checks. Secrets are never returned or logged."""
+@app.post("/health/verify")
+async def verify_integrations(request: Request):
+    """Rate-limited on-demand upstream checks. Secrets are never returned or logged."""
+    now_ts = time.monotonic()
+    forwarded = request.headers.get("x-forwarded-for", "")
+    client_ip = forwarded.split(",")[0].strip() or (request.client.host if request.client else "unknown")
+    previous = _verify_attempts.get(client_ip, 0.0)
+    if now_ts - previous < VERIFY_COOLDOWN_SECONDS:
+        raise HTTPException(429, "Integratsiyalarni qayta tekshirishdan oldin biroz kuting.")
+    _verify_attempts[client_ip] = now_ts
+    if len(_verify_attempts) > 2048:
+        cutoff = now_ts - VERIFY_COOLDOWN_SECONDS * 4
+        for address, timestamp in list(_verify_attempts.items()):
+            if timestamp < cutoff:
+                _verify_attempts.pop(address, None)
     results = {
         "gemini": {"status": "missing", "verified": False},
         "copernicus": {"status": "missing", "verified": False},
@@ -256,7 +270,7 @@ async def photo(payload: dict = Body(...)):
     }
 
 @app.get("/salinity")
-async def salinity(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180), days: int = 60):
+async def salinity(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180), days: int = Query(60, ge=1, le=365)):
     key = (round(lat, 4), round(lon, 4), days, dt.date.today().isoformat())
     if key in _cache:
         return _cache[key]
