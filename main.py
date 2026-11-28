@@ -84,6 +84,59 @@ def integration_health():
         "note": "configured faqat sozlama mavjudligini bildiradi. Tashqi xizmatning ishlashi ushbu endpointda jonli tekshirilmaydi. Ma'lumotlar bazasi mavjudligi ham ma'lumotlar saqlanib qolishini kafolatlamaydi."
     }
 
+@app.post("/health/verify")
+async def verify_integrations():
+    """On-demand upstream checks. Secrets are never returned or logged."""
+    results = {
+        "gemini": {"status": "missing", "verified": False},
+        "copernicus": {"status": "missing", "verified": False},
+        "database": {
+            "status": "configured" if os.environ.get("DATABASE_URL", "").strip() else "missing",
+            "verified": False
+        }
+    }
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    model = os.environ.get("GEMINI_MODEL", "gemini-flash-latest").strip()
+    if gemini_key:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=5.0)) as client:
+                response = await client.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                    headers={"x-goog-api-key": gemini_key, "Content-Type": "application/json"},
+                    json={"contents": [{"role": "user", "parts": [{"text": "Reply with OK."}]}],
+                          "generationConfig": {"maxOutputTokens": 4, "temperature": 0}},
+                )
+            results["gemini"] = {
+                "status": "verified" if response.status_code == 200 else "error",
+                "verified": response.status_code == 200,
+                "http_status": response.status_code
+            }
+        except httpx.TimeoutException:
+            results["gemini"] = {"status": "timeout", "verified": False}
+        except httpx.HTTPError:
+            results["gemini"] = {"status": "unreachable", "verified": False}
+
+    if CID.strip() and SEC.strip():
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=5.0)) as client:
+                response = await client.post(
+                    TOKEN_URL,
+                    data={"grant_type": "client_credentials", "client_id": CID, "client_secret": SEC},
+                )
+            results["copernicus"] = {
+                "status": "verified" if response.status_code == 200 else "error",
+                "verified": response.status_code == 200,
+                "http_status": response.status_code
+            }
+        except httpx.TimeoutException:
+            results["copernicus"] = {"status": "timeout", "verified": False}
+        except httpx.HTTPError:
+            results["copernicus"] = {"status": "unreachable", "verified": False}
+
+    return {"checked_at": dt.datetime.now(dt.timezone.utc).isoformat(), "integrations": results}
+
+
 @app.post("/photo")
 async def photo(payload: dict = Body(...)):
     encoded = str(payload.get("image", ""))
