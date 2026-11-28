@@ -1,4 +1,4 @@
-import os, time, datetime as dt
+import os, time, datetime as dt, math
 import base64, io
 import httpx
 
@@ -21,6 +21,15 @@ app.include_router(chat_router)
 _tok = {"v": None, "exp": 0}
 _cache = {}
 _verify_attempts = {}
+
+
+def _stat_number(value):
+    """Normalize Sentinel Hub statistics, which may arrive as strings."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 VERIFY_COOLDOWN_SECONDS = 30
 
 EVALSCRIPT = """//VERSION=3
@@ -290,11 +299,13 @@ async def salinity(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..
     if r.status_code != 200:
         raise HTTPException(502, "Sentinel Hub xatosi: " + r.text[:300])
     try:
-        o = r.json()["data"][0]["outputs"]
-        si = o["si"]["bands"]["B0"]["stats"]["mean"]
-        ndvi = o["ndvi"]["bands"]["B0"]["stats"]["mean"]
-    except Exception:
-        raise HTTPException(404, "Bu nuqta uchun bulutsiz suratlar topilmadi")
+        outputs = r.json()["data"][0]["outputs"]
+        si = _stat_number(outputs["si"]["bands"]["B0"]["stats"].get("mean"))
+        ndvi = _stat_number(outputs["ndvi"]["bands"]["B0"]["stats"].get("mean"))
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise HTTPException(404, "Bu nuqta uchun bulutsiz Sentinel-2 tasviri yoki statistikasi topilmadi")
+    if si is None or ndvi is None:
+        raise HTTPException(404, "Sentinel-2 statistikasi to‘liq emas. Boshqa sana yoki nuqtani sinab ko‘ring.")
     res = {"lat": lat, "lon": lon, "period_days": days, "si": round(si, 3),
            "ndvi": round(ndvi, 3),
            "note": "Sentinel-2 dan olingan SI va NDVI ko‘rsatkichlari. Ular tuproq EC qiymati yoki sho‘rlanish darajasini bevosita o‘lchamaydi."}
