@@ -133,8 +133,8 @@ async def chat(req: Request, payload: dict = Body(...)):
     # standard generateContent endpoint so the farmer can still get an answer.
     if not answer and response.status_code not in (401, 403, 429):
         fallback_body = {
-            "systemInstruction": {"parts": [{"text": SYSTEM + "\\n" + LANGUAGE_INSTRUCTIONS[language] + "\\n" + context}]},
-            "contents": [{"role": "user", "parts": [{"text": "\\n".join(transcript)}]}],
+            "systemInstruction": {"parts": [{"text": SYSTEM + "\n" + LANGUAGE_INSTRUCTIONS[language] + "\n" + context}]},
+            "contents": [{"role": "user", "parts": [{"text": "\n".join(transcript)}]}],
             "generationConfig": {"temperature": 0.4, "maxOutputTokens": 300}
         }
         try:
