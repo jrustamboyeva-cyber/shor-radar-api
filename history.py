@@ -1,4 +1,4 @@
-import os, time, datetime as dt
+import os, time, datetime as dt, math
 import httpx
 from fastapi import APIRouter, HTTPException, Query
 
@@ -42,7 +42,12 @@ async def token():
     return _tok["v"]
 
 def num(x):
-    return x if isinstance(x, (int, float)) and x == x else None
+    """Normalize Sentinel Hub statistics, including numeric strings."""
+    try:
+        value = float(x)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
 
 
 @router.get("/history")
