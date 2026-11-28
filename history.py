@@ -31,10 +31,6 @@ async def token():
 def num(x):
     return x if isinstance(x, (int, float)) and x == x else None
 
-def level(si, ndvi):
-    if ndvi > 0.5 or si < 0.16: return "Past", 1.5
-    if si < 0.24: return "Orta", 4.0
-    return "Yuqori", 8.0
 
 @router.get("/history")
 async def history(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180), months: int = Query(12, ge=3, le=24)):
@@ -66,10 +62,9 @@ async def history(lat: float = Query(..., ge=-90, le=90), lon: float = Query(...
             si = nd = None
         m = d["interval"]["from"][:7]
         if si is None or nd is None:
-            out.append({"month": m, "si": None, "ndvi": None, "level": None, "ec": None})
+            out.append({"month": m, "si": None, "ndvi": None})
         else:
-            lv, ec = level(si, nd)
-            out.append({"month": m, "si": round(si, 3), "ndvi": round(nd, 3), "level": lv, "ec": ec})
+            out.append({"month": m, "si": round(si, 3), "ndvi": round(nd, 3)})
     res = {"lat": lat, "lon": lon, "points": out, "note": "Taxminiy baho; bulutli oylarda ma'lumot bo'lmasligi mumkin."}
     _cache[key] = res
     return res
