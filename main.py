@@ -53,12 +53,35 @@ def health():
 
 @app.get("/health/integrations")
 def integration_health():
+    # Never return credentials or connection strings from this public endpoint.
+    gemini_key = bool(os.environ.get("GEMINI_API_KEY", "").strip())
+    gemini_model = os.environ.get("GEMINI_MODEL", "gemini-flash-latest").strip()
+    copernicus_credentials = bool(CID.strip() and SEC.strip())
+    database_url = os.environ.get("DATABASE_URL", "").strip()
+
     return {
         "api": "ready",
-        "gemini_configured": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
-        "copernicus_configured": bool(CID and SEC),
-        "database_configured": bool(os.environ.get("DATABASE_URL", "").strip()),
-        "note": "Configured means credentials exist; it does not guarantee upstream availability."
+        "gemini_configured": gemini_key,
+        "gemini_model": gemini_model if gemini_key else None,
+        "copernicus_configured": copernicus_credentials,
+        "database_configured": bool(database_url),
+        "integrations": {
+            "gemini": {
+                "status": "configured" if gemini_key else "missing",
+                "model": gemini_model if gemini_key else None,
+                "verified": False
+            },
+            "copernicus": {
+                "status": "configured" if copernicus_credentials else "missing",
+                "verified": False
+            },
+            "database": {
+                "status": "configured" if database_url else "missing",
+                "kind": "postgresql" if database_url.lower().startswith(("postgres://", "postgresql://")) else ("other" if database_url else None),
+                "persistent_storage_verified": False
+            }
+        },
+        "note": "configured faqat sozlama mavjudligini bildiradi. Tashqi xizmatning ishlashi ushbu endpointda jonli tekshirilmaydi. Ma'lumotlar bazasi mavjudligi ham ma'lumotlar saqlanib qolishini kafolatlamaydi."
     }
 
 @app.post("/photo")
