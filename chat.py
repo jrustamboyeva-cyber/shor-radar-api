@@ -6,7 +6,7 @@ router = APIRouter()
 
 # Gemini API key is stored in Render Environment Variables.
 KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest").strip()
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip()
 LIMIT = int(os.environ.get("CHAT_DAILY_LIMIT", "15"))
 
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
@@ -110,7 +110,7 @@ async def chat(req: Request, payload: dict = Body(...)):
     }
 
     try:
-        timeout = httpx.Timeout(connect=8.0, read=20.0, write=10.0, pool=5.0)
+        timeout = httpx.Timeout(connect=10.0, read=60.0, write=15.0, pool=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 GEMINI_URL,
