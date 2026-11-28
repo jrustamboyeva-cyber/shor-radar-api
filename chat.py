@@ -1,4 +1,4 @@
-import os, time, asyncio, random
+import os, time
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Request
 
@@ -84,26 +84,22 @@ async def chat(req: Request, payload: dict = Body(...)):
         "contents": contents,
         "generationConfig": {
             "temperature": 0.4,
-            "maxOutputTokens": 450,
+            "maxOutputTokens": 300,
         },
     }
 
     try:
-        async with httpx.AsyncClient(timeout=40) as client:
-            response = None
-            # Gemini 503 is usually temporary overload; retry with backoff.
-            for attempt in range(3):
-                response = await client.post(
-                    GEMINI_URL,
-                    headers={
-                        "x-goog-api-key": KEY,
-                        "Content-Type": "application/json",
-                    },
-                    json=request_body,
-                )
-                if response.status_code != 503 or attempt == 2:
-                    break
-                await asyncio.sleep((2 ** attempt) + random.uniform(0, 0.5))
+        # Keep Gemini's upstream request below Render's inbound request timeout.
+        timeout = httpx.Timeout(connect=8.0, read=20.0, write=10.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                GEMINI_URL,
+                headers={
+                    "x-goog-api-key": KEY,
+                    "Content-Type": "application/json",
+                },
+                json=request_body,
+            )
     except httpx.TimeoutException:
         raise HTTPException(504, "Gemini javobi vaqtida kelmadi. Qayta urinib ko'ring.")
     except httpx.HTTPError:
