@@ -1,89 +1,62 @@
-import os, time, datetime as dt, math
-import httpx
-from fastapi import APIRouter, HTTPException, Query
+"""Monthly Sentinel-2 indicator history for a field (point or polygon)."""
+import datetime as dt
+
+from fastapi import APIRouter, Body, HTTPException, Query
+
+import sentinel
+from security import BoundedCache
 
 router = APIRouter()
-CID = os.environ.get("CDSE_CLIENT_ID", "")
-SEC = os.environ.get("CDSE_CLIENT_SECRET", "")
-TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
-STAT_URL = "https://sh.dataspace.copernicus.eu/api/v1/statistics"
-_tok = {"v": None, "exp": 0}
-_cache = {}
+_cache = BoundedCache(max_items=512, ttl_seconds=12 * 3600)
+NOTE = "Taxminiy ko‘rsatkich; bulutli oylarda ma’lumot bo‘lmasligi mumkin. SI/NDVI/NDMI tuproq EC qiymatini bevosita o‘lchamaydi."
 
-EVAL = """//VERSION=3
-function setup() {
-  return {
-    input: [{ bands: ["B02", "B04", "B08", "SCL", "dataMask"] }],
-    output: [
-      { id: "si", bands: 1, sampleType: "FLOAT32" },
-      { id: "ndvi", bands: 1, sampleType: "FLOAT32" },
-      { id: "dataMask", bands: 1, sampleType: "UINT8" }
-    ]
-  };
-}
-function evaluatePixel(s) {
-  var valid = s.dataMask === 1 && [3, 8, 9, 10, 11].indexOf(s.SCL) < 0;
-  var si = Math.sqrt(Math.max(0, s.B02 * s.B04));
-  var ndvi = (s.B08 - s.B04) / (s.B08 + s.B04 + 1e-6);
-  return { si: [si], ndvi: [ndvi], dataMask: [valid ? 1 : 0] };
-}"""
 
-async def token():
-    if not CID or not SEC:
-        raise HTTPException(503, "CDSE_CLIENT_ID / CDSE_CLIENT_SECRET sozlanmagan")
-    if _tok["v"] and time.time() < _tok["exp"] - 60:
-        return _tok["v"]
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(TOKEN_URL, data={"grant_type": "client_credentials", "client_id": CID, "client_secret": SEC})
-    if r.status_code != 200:
-        raise HTTPException(502, "Token olinmadi")
-    j = r.json()
-    _tok.update(v=j["access_token"], exp=time.time() + j.get("expires_in", 300))
-    return _tok["v"]
+def _month_start(months: int) -> tuple[dt.datetime, dt.datetime]:
+    end = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+    year, month = end.year, end.month - (months - 1)
+    while month <= 0:
+        month += 12
+        year -= 1
+    return dt.datetime(year, month, 1, tzinfo=dt.timezone.utc), end
 
-def num(x):
-    """Normalize Sentinel Hub statistics, including numeric strings."""
-    try:
-        value = float(x)
-    except (TypeError, ValueError):
-        return None
-    return value if math.isfinite(value) else None
+
+async def _history(bounds: dict, key: tuple, months: int, extra: dict):
+    cache_key = key + (months, dt.date.today().isoformat())
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+    start, end = _month_start(months)
+    data = await sentinel.query(sentinel.statistics_body(bounds, start, end, "P1M", max_cloud=40), timeout=90)
+    points = []
+    for entry in data:
+        month = str(entry.get("interval", {}).get("from", ""))[:7]
+        parsed = sentinel.parse_interval(entry)
+        if parsed:
+            points.append({"month": month, "si": parsed["si"], "ndvi": parsed["ndvi"], "ndmi": parsed["ndmi"],
+                           "valid_pixels": parsed["valid_pixels"]})
+        else:
+            points.append({"month": month, "si": None, "ndvi": None, "ndmi": None, "valid_pixels": 0})
+    result = {**extra, "points": points, "note": NOTE}
+    _cache.set(cache_key, result)
+    return result
 
 
 @router.get("/history")
-async def history(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180), months: int = Query(12, ge=3, le=24)):
-    key = (round(lat, 4), round(lon, 4), months, dt.date.today().isoformat())
-    if key in _cache:
-        return _cache[key]
-    end = dt.datetime.utcnow().replace(microsecond=0)
-    start = (end.replace(day=1) - dt.timedelta(days=30 * (months - 1))).replace(day=1, hour=0, minute=0, second=0)
-    dx, dy = 0.0007, 0.0005
-    body = {
-        "input": {"bounds": {"bbox": [lon - dx, lat - dy, lon + dx, lat + dy],
-                             "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"}},
-                  "data": [{"type": "sentinel-2-l2a", "dataFilter": {"maxCloudCoverage": 40}}]},
-        "aggregation": {"timeRange": {"from": start.isoformat() + "Z", "to": end.isoformat() + "Z"},
-                        "aggregationInterval": {"of": "P1M", "lastIntervalBehavior": "SHORTEN"},
-                        "evalscript": EVAL, "resx": 0.0001, "resy": 0.0001}}
-    t = await token()
-    async with httpx.AsyncClient(timeout=90) as c:
-        r = await c.post(STAT_URL, json=body, headers={"Authorization": "Bearer " + t})
-    if r.status_code != 200:
-        raise HTTPException(502, "Sentinel Hub xatosi: " + r.text[:200])
-    out = []
-    for d in r.json().get("data", []):
-        try:
-            o = d["outputs"]
-            si = num(o["si"]["bands"]["B0"]["stats"].get("mean"))
-            nd = num(o["ndvi"]["bands"]["B0"]["stats"].get("mean"))
-        except Exception:
-            si = nd = None
-        m = d["interval"]["from"][:7]
-        if si is None or nd is None:
-            out.append({"month": m, "si": None, "ndvi": None})
-        else:
-            out.append({"month": m, "si": round(si, 3), "ndvi": round(nd, 3)})
-    res = {"lat": lat, "lon": lon, "points": out, "note": "Taxminiy baho; bulutli oylarda ma'lumot bo'lmasligi mumkin."}
-    _cache[key] = res
-    return res
+async def history(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180),
+                  months: int = Query(12, ge=3, le=24)):
+    return await _history(sentinel.point_bounds(lat, lon), ("pt", round(lat, 4), round(lon, 4)), months,
+                          {"lat": lat, "lon": lon})
 
+
+@router.post("/history")
+async def history_area(payload: dict = Body(...)):
+    try:
+        months = int(payload.get("months", 12))
+    except (TypeError, ValueError):
+        raise HTTPException(422, "months son bo‘lishi kerak")
+    if not 3 <= months <= 24:
+        raise HTTPException(422, "months 3 dan 24 gacha bo‘lishi kerak")
+    bounds = sentinel.polygon_bounds(payload.get("polygon"))
+    ring = bounds["geometry"]["coordinates"][0]
+    key = ("poly",) + tuple((round(p[1], 5), round(p[0], 5)) for p in ring)
+    return await _history(bounds, key, months, {"mode": "polygon"})
