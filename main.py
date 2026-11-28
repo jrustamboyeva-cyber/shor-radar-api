@@ -110,6 +110,8 @@ async def verify_integrations():
     gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
     model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip()
     if gemini_key:
+        prompt = "Reply with OK."
+        system_text = "You are a short integration health check. Reply only OK."
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(35.0, connect=8.0)) as client:
                 response = await client.post(
@@ -117,8 +119,9 @@ async def verify_integrations():
                     headers={"x-goog-api-key": gemini_key, "Content-Type": "application/json"},
                     json={
                         "model": model,
-                        "input": "Reply with OK.",
-                        "generation_config": {"max_output_tokens": 4, "temperature": 0}
+                        "system_instruction": system_text,
+                        "input": prompt,
+                        "generation_config": {"max_output_tokens": 8, "temperature": 0}
                     },
                 )
             verified = False
@@ -131,10 +134,38 @@ async def verify_integrations():
                     )
                 except (ValueError, AttributeError, TypeError):
                     verified = False
+
+            method = "interactions"
+            http_status = response.status_code
+            if not verified and response.status_code not in (401, 403, 429):
+                async with httpx.AsyncClient(timeout=httpx.Timeout(35.0, connect=8.0)) as client:
+                    fallback = await client.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                        headers={"x-goog-api-key": gemini_key, "Content-Type": "application/json"},
+                        json={
+                            "systemInstruction": {"parts": [{"text": system_text}]},
+                            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                            "generationConfig": {"maxOutputTokens": 8, "temperature": 0}
+                        },
+                    )
+                http_status = fallback.status_code
+                if fallback.status_code == 200:
+                    try:
+                        verified = any(
+                            part.get("text")
+                            for candidate in fallback.json().get("candidates", [])
+                            for part in candidate.get("content", {}).get("parts", [])
+                            if isinstance(part, dict)
+                        )
+                    except (ValueError, AttributeError, TypeError):
+                        verified = False
+                    method = "generateContent"
+
             results["gemini"] = {
                 "status": "verified" if verified else "error",
                 "verified": verified,
-                "http_status": response.status_code
+                "http_status": http_status,
+                "method": method if verified else None
             }
         except httpx.TimeoutException:
             results["gemini"] = {"status": "timeout", "verified": False}
