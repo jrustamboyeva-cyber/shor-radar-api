@@ -203,3 +203,11 @@ def test_missing_copernicus_credentials_is_503(monkeypatch):
     sentinel._token.update(value=None, expires=0)
     r = client.get("/salinity?lat=41.3&lon=60.9")
     assert r.status_code == 503
+
+
+def test_first_verify_is_allowed_right_after_boot(monkeypatch):
+    # Regression: on a freshly booted machine time.monotonic() can be below the cooldown.
+    monkeypatch.setattr(main.time, "monotonic", lambda: 5.0)
+    first = client.post("/health/verify", headers={"x-forwarded-for": "203.0.113.50"})
+    second = client.post("/health/verify", headers={"x-forwarded-for": "203.0.113.50"})
+    assert first.status_code == 200 and second.status_code == 429

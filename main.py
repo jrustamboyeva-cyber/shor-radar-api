@@ -74,8 +74,10 @@ async def verify_integrations(request: Request):
     """Rate-limited on-demand upstream checks. Secrets are never returned or logged."""
     now_ts = time.monotonic()
     address = client_ip(request)
-    previous = _verify_attempts.get(address, 0.0)
-    if now_ts - previous < VERIFY_COOLDOWN_SECONDS:
+    previous = _verify_attempts.get(address)
+    # monotonic() counts from boot, so on a fresh machine it can be < 30 s:
+    # only compare when this client really made an earlier attempt.
+    if previous is not None and now_ts - previous < VERIFY_COOLDOWN_SECONDS:
         raise HTTPException(429, "Integratsiyalarni qayta tekshirishdan oldin biroz kuting.")
     _verify_attempts[address] = now_ts
     if len(_verify_attempts) > 2048:
