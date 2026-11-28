@@ -280,34 +280,56 @@ async def photo(payload: dict = Body(...)):
 
 @app.get("/salinity")
 async def salinity(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180), days: int = Query(60, ge=1, le=365)):
-    key = (round(lat, 4), round(lon, 4), days, dt.date.today().isoformat())
-    if key in _cache:
-        return _cache[key]
-    end = dt.datetime.utcnow().replace(microsecond=0)
-    start = end - dt.timedelta(days=days)
-    dx, dy = 0.0007, 0.0005
-    body = {
-      "input": {"bounds": {"bbox": [lon-dx, lat-dy, lon+dx, lat+dy],
-                           "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"}},
-                "data": [{"type": "sentinel-2-l2a", "dataFilter": {"maxCloudCoverage": 40}}]},
-      "aggregation": {"timeRange": {"from": start.isoformat()+"Z", "to": end.isoformat()+"Z"},
-                      "aggregationInterval": {"of": "P"+str(days)+"D"},
-                      "evalscript": EVALSCRIPT, "resx": 0.0001, "resy": 0.0001}}
+    # Try the requested window first, then wider windows to handle sparse/cloudy
+    # Sentinel-2 coverage. Keep the actual period in the response.
+    windows = list(dict.fromkeys([days, max(days, 120), max(days, 180), 365]))
     t = await token()
     async with httpx.AsyncClient(timeout=60) as c:
-        r = await c.post(STAT_URL, json=body, headers={"Authorization": "Bearer "+t})
-    if r.status_code != 200:
-        raise HTTPException(502, "Sentinel Hub xatosi: " + r.text[:300])
-    try:
-        outputs = r.json()["data"][0]["outputs"]
-        si = _stat_number(outputs["si"]["bands"]["B0"]["stats"].get("mean"))
-        ndvi = _stat_number(outputs["ndvi"]["bands"]["B0"]["stats"].get("mean"))
-    except (KeyError, IndexError, TypeError, ValueError):
-        raise HTTPException(404, "Bu nuqta uchun bulutsiz Sentinel-2 tasviri yoki statistikasi topilmadi")
-    if si is None or ndvi is None:
-        raise HTTPException(404, "Sentinel-2 statistikasi to‘liq emas. Boshqa sana yoki nuqtani sinab ko‘ring.")
-    res = {"lat": lat, "lon": lon, "period_days": days, "si": round(si, 3),
-           "ndvi": round(ndvi, 3),
-           "note": "Sentinel-2 dan olingan SI va NDVI ko‘rsatkichlari. Ular tuproq EC qiymati yoki sho‘rlanish darajasini bevosita o‘lchamaydi."}
-    _cache[key] = res
-    return res
+        for window_days in windows:
+            key = (round(lat, 4), round(lon, 4), window_days, dt.date.today().isoformat())
+            if key in _cache:
+                return _cache[key]
+            end = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+            start = end - dt.timedelta(days=window_days)
+            dx, dy = 0.0007, 0.0005
+            body = {
+                "input": {
+                    "bounds": {
+                        "bbox": [lon-dx, lat-dy, lon+dx, lat+dy],
+                        "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"}
+                    },
+                    "data": [{
+                        "type": "sentinel-2-l2a",
+                        "dataFilter": {"maxCloudCoverage": 80}
+                    }]
+                },
+                "aggregation": {
+                    "timeRange": {
+                        "from": start.isoformat().replace("+00:00", "Z"),
+                        "to": end.isoformat().replace("+00:00", "Z")
+                    },
+                    "aggregationInterval": {"of": "P" + str(window_days) + "D"},
+                    "evalscript": EVALSCRIPT,
+                    "resx": 0.0001,
+                    "resy": 0.0001
+                }
+            }
+            r = await c.post(STAT_URL, json=body, headers={"Authorization": "Bearer " + t})
+            if r.status_code != 200:
+                raise HTTPException(502, "Sentinel Hub xatosi: " + r.text[:300])
+            try:
+                outputs = r.json()["data"][0]["outputs"]
+                si = _stat_number(outputs["si"]["bands"]["B0"]["stats"].get("mean"))
+                ndvi = _stat_number(outputs["ndvi"]["bands"]["B0"]["stats"].get("mean"))
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue
+            if si is None or ndvi is None:
+                continue
+            res = {
+                "lat": lat, "lon": lon, "period_days": window_days,
+                "si": round(si, 3), "ndvi": round(ndvi, 3),
+                "note": "Sentinel-2 dan olingan SI va NDVI ko‘rsatkichlari. Ular tuproq EC qiymati yoki sho‘rlanish darajasini bevosita o‘lchamaydi."
+            }
+            _cache[key] = res
+            return res
+    raise HTTPException(404, "Tanlangan nuqtada 365 kun ichida ham yaroqli Sentinel-2 statistikasi topilmadi. Maydon koordinatasini tekshiring yoki boshqa nuqtani tanlang.")
