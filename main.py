@@ -56,31 +56,41 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {"ok": True, "service": "Shor Radar API"}
+
+@app.get("/health/integrations")
+def integration_health():
+    return {
+        "api": "ready",
+        "gemini_configured": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
+        "copernicus_configured": bool(CID and SEC),
+        "database_configured": bool(os.environ.get("DATABASE_URL", "").strip()),
+        "note": "Configured means credentials exist; it does not guarantee upstream availability."
+    }
 
 @app.post("/photo")
 async def photo(payload: dict = Body(...)):
+    encoded = str(payload.get("image", ""))
+    if len(encoded) > 14_000_000:
+        raise HTTPException(413, "Surat 10 MB dan kichik bo‘lishi kerak")
     try:
-        raw = base64.b64decode(str(payload.get("image", "")).split(",")[-1])
+        raw = base64.b64decode(encoded.split(",")[-1], validate=True)
         im = Image.open(io.BytesIO(raw)).convert("RGB")
     except Exception:
-        raise HTTPException(400, "Surat oqilmadi")
-    im.thumbnail((240, 240))
-    px = list(im.getdata())
-    salt = 0
-    for r, g, b in px:
-        mx, mn = max(r, g, b), min(r, g, b)
-        if mn > 165 and (mx - mn) / mx < 0.16:
-            salt += 1
-    p = round(salt / len(px) * 100)
-    if p < 10:
-        lv, tip = "Past", "Tuz deyarli yoq."
-    elif p < 30:
-        lv, tip = "Orta", "Yengil sho'r yuvish kerak."
-    else:
-        lv, tip = "Yuqori", "Zudlik bilan sho'r yuvish va drenajni tekshirish kerak."
-    return {"crust_percent": p, "level": lv, "tip": tip,
-            "note": "Taxminiy natija; EC-metr bilan tasdiqlang."}
+        raise HTTPException(400, "Surat oqilmadi yoki formati noto‘g‘ri")
+    im.thumbnail((320, 320))
+    pixels = list(im.getdata())
+    neutral_bright = 0
+    for red, green, blue in pixels:
+        maximum, minimum = max(red, green, blue), min(red, green, blue)
+        if maximum > 0 and minimum > 165 and (maximum - minimum) / maximum < 0.16:
+            neutral_bright += 1
+    percent = round(neutral_bright / max(len(pixels), 1) * 100, 1)
+    return {
+        "bright_neutral_pixel_percent": percent,
+        "method": "RGB rang statistikasi",
+        "note": "Bu faqat suratdagi och va neytral rangli piksellar ulushi. Tuz kristali yoki tuproq sho‘rlanishini aniqlamaydi; EC laboratoriya tahlili yoki kalibrlangan EC-metr talab qilinadi."
+    }
 
 @app.get("/salinity")
 async def salinity(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180), days: int = 60):
@@ -108,9 +118,8 @@ async def salinity(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..
         ndvi = o["ndvi"]["bands"]["B0"]["stats"]["mean"]
     except Exception:
         raise HTTPException(404, "Bu nuqta uchun bulutsiz suratlar topilmadi")
-    lv, ec = level(si, ndvi)
     res = {"lat": lat, "lon": lon, "period_days": days, "si": round(si, 3),
-           "ndvi": round(ndvi, 3), "level": lv, "ec_estimate": ec,
-           "note": "Sunʼiy yoʻldosh asosida taxminiy baho; EC-metr bilan tasdiqlang."}
+           "ndvi": round(ndvi, 3),
+           "note": "Sentinel-2 dan olingan SI va NDVI ko‘rsatkichlari. Ular tuproq EC qiymati yoki sho‘rlanish darajasini bevosita o‘lchamaydi."}
     _cache[key] = res
     return res
