@@ -13,15 +13,21 @@ GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:g
 _cnt = {}
 
 SYSTEM = (
-    "Sen 'Sho'r Agronom'san: O'zbekistonda tuproq sho'rlanishi, sho'r yuvish, "
-    "sug'orish va ekin tanlash bo'yicha yordamchi. Faqat o'zbek tilida, oddiy "
-    "fermerga tushunarli, 3-5 gapda javob ber. Foydalanuvchining dala ma'lumotlari "
-    "berilsa, javobda ulardan foydalan. Sun'iy yo'ldoshdan olingan SI, NDVI yoki "
-    "EC qiymatlari taxminiy ekanini, laboratoriya yoki EC-metr bilan tasdiqlash "
-    "kerakligini eslat. NDVI o'zi sho'rlanishni bevosita o'lchamasligini unutma. "
-    "Aniq bilmasang, taxmin qilma va mahalliy agronom bilan maslahatlashishni ayt. "
+    "Sen SHO'R RADAR platformasining Sho'r Agronom yordamchisisan. "
+    "O'zbekistonda tuproq sho'rlanishi, sho'r yuvish, sug'orish va ekin tanlash "
+    "bo'yicha fermerlarga tushunarli, amaliy va ehtiyotkor maslahat ber. "
+    "Foydalanuvchining dala ma'lumotlaridan foydalan. Sun'iy yo'ldoshdan olingan "
+    "SI va NDVI tuproq EC qiymatini bevosita o'lchamasligini, laboratoriya yoki "
+    "kalibrlangan EC-metr bilan tasdiqlash kerakligini eslat. Aniq bilmasang, "
+    "taxmin qilma va mahalliy agronom bilan maslahatlashishni ayt. "
     "Pestitsid yoki boshqa kimyoviy vositalarning xavfli dozalarini tavsiya qilma."
 )
+
+LANGUAGE_INSTRUCTIONS = {
+    "uz": "Javobni faqat o'zbek tilida, lotin yozuvida yoz.",
+    "ru": "Отвечай только на русском языке. Используй простой и понятный фермеру язык.",
+    "kaa": "Juwaptı tek Qaraqalpaq tilinde jaz. Ápiwayı hám fermerge túsinikli sózlerdi qollan."
+}
 
 
 @router.post("/chat")
@@ -42,10 +48,16 @@ async def chat(req: Request, payload: dict = Body(...)):
     if not question:
         raise HTTPException(400, "Savol bo'sh")
 
+    language = str(payload.get("language", "uz")).lower().strip()
+    if language not in LANGUAGE_INSTRUCTIONS:
+        language = "uz"
+
     field = payload.get("field") or {}
+    if not isinstance(field, dict):
+        field = {}
     context = (
         "Dala ma'lumotlari: nomi=%s, ekin=%s, maydon=%s ga, viloyat=%s, "
-        "EC=%s dS/m, manba=%s, ma'lumot holati=%s."
+        "EC=%s dS/m, manba=%s, ma'lumot holati=%s, koordinatalar=%s,%s, NDVI=%s, SI=%s."
         % (
             field.get("n") or "ko'rsatilmagan",
             field.get("c") or "ko'rsatilmagan",
@@ -54,18 +66,26 @@ async def chat(req: Request, payload: dict = Body(...)):
             field.get("ec") if field.get("ec") is not None else "mavjud emas",
             field.get("ec_source") or "ko'rsatilmagan",
             field.get("ec_status") or "mavjud emas",
+            field.get("lat", "mavjud emas"),
+            field.get("lon", "mavjud emas"),
+            field.get("ndvi", "mavjud emas"),
+            field.get("si", "mavjud emas"),
         )
     )
 
     contents = []
-    for item in (payload.get("history") or [])[-6:]:
-        role = item.get("role")
-        message = item.get("content")
-        if role in ("user", "assistant") and message:
-            contents.append({
-                "role": "user" if role == "user" else "model",
-                "parts": [{"text": str(message)[:600]}],
-            })
+    history = payload.get("history") or []
+    if isinstance(history, list):
+        for item in history[-6:]:
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role")
+            message = item.get("content") or item.get("text")
+            if role in ("user", "assistant") and message:
+                contents.append({
+                    "role": "user" if role == "user" else "model",
+                    "parts": [{"text": str(message)[:600]}],
+                })
 
     # Gemini conversation history must begin with a user message.
     while contents and contents[0]["role"] != "user":
@@ -80,7 +100,7 @@ async def chat(req: Request, payload: dict = Body(...)):
 
     request_body = {
         "system_instruction": {
-            "parts": [{"text": SYSTEM + "\n" + context}]
+            "parts": [{"text": SYSTEM + "\\n" + LANGUAGE_INSTRUCTIONS[language] + "\\n" + context}]
         },
         "contents": contents,
         "generationConfig": {
@@ -90,7 +110,6 @@ async def chat(req: Request, payload: dict = Body(...)):
     }
 
     try:
-        # Keep Gemini's upstream request below Render's inbound request timeout.
         timeout = httpx.Timeout(connect=8.0, read=20.0, write=10.0, pool=5.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
@@ -107,7 +126,6 @@ async def chat(req: Request, payload: dict = Body(...)):
         raise HTTPException(502, "Gemini xizmatiga ulanishda xatolik yuz berdi.")
 
     if response.status_code != 200:
-        # Log Google's diagnostic response for Render logs; never log request headers or API key.
         print("Gemini API error:", response.status_code, response.text[:1500], flush=True)
         if response.status_code in (401, 403):
             raise HTTPException(502, "Gemini API kaliti noto'g'ri yoki API ruxsati yoqilmagan.")
