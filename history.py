@@ -18,6 +18,8 @@ function evaluatePixel(s){
  return{si:[Math.sqrt(s.B03*s.B04)],ndvi:[(s.B08-s.B04)/(s.B08+s.B04+1e-6)],dataMask:[ok]}}"""
 
 async def token():
+    if not CID or not SEC:
+        raise HTTPException(503, "CDSE_CLIENT_ID / CDSE_CLIENT_SECRET sozlanmagan")
     if _tok["v"] and time.time() < _tok["exp"] - 60:
         return _tok["v"]
     async with httpx.AsyncClient(timeout=30) as c:
