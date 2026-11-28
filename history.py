@@ -11,11 +11,22 @@ _tok = {"v": None, "exp": 0}
 _cache = {}
 
 EVAL = """//VERSION=3
-function setup(){return{input:[{bands:["B03","B04","B08","SCL","dataMask"]}],
-output:[{id:"si",bands:1},{id:"ndvi",bands:1},{id:"dataMask",bands:["si","ndvi"]}]}}
-function evaluatePixel(s){
- var ok=s.dataMask==1&&[3,8,9,10,11].indexOf(s.SCL)<0?1:0;
- return{si:[Math.sqrt(s.B03*s.B04)],ndvi:[(s.B08-s.B04)/(s.B08+s.B04+1e-6)],dataMask:[ok,ok]}}"""
+function setup() {
+  return {
+    input: [{ bands: ["B02", "B04", "B08", "SCL", "dataMask"] }],
+    output: [
+      { id: "si", bands: 1, sampleType: "FLOAT32" },
+      { id: "ndvi", bands: 1, sampleType: "FLOAT32" },
+      { id: "dataMask", bands: 1, sampleType: "UINT8" }
+    ]
+  };
+}
+function evaluatePixel(s) {
+  var valid = s.dataMask === 1 && [3, 8, 9, 10, 11].indexOf(s.SCL) < 0;
+  var si = Math.sqrt(Math.max(0, s.B02 * s.B04));
+  var ndvi = (s.B08 - s.B04) / (s.B08 + s.B04 + 1e-6);
+  return { si: [si], ndvi: [ndvi], dataMask: [valid ? 1 : 0] };
+}"""
 
 async def token():
     if not CID or not SEC:
