@@ -43,11 +43,11 @@ async def token():
     return _tok["v"]
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
     return {"ok": True, "service": "Shor Radar API"}
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health():
     return {"ok": True, "service": "Shor Radar API"}
 
