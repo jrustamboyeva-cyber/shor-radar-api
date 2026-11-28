@@ -7,7 +7,8 @@ router = APIRouter()
 KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip()
 LIMIT = int(os.environ.get("CHAT_DAILY_LIMIT", "15"))
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
+INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
+GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 _cnt = {}
 
 SYSTEM = (
@@ -114,28 +115,61 @@ async def chat(req: Request, payload: dict = Body(...)):
     except httpx.HTTPError:
         raise HTTPException(502, "Gemini xizmatiga ulanishda xatolik yuz berdi.")
 
-    if response.status_code != 200:
-        print("Gemini Interactions API error:", response.status_code, response.text[:1500], flush=True)
-        if response.status_code in (401, 403):
+    answer = ""
+    if response.status_code == 200:
+        try:
+            data = response.json()
+            for step in data.get("steps", []):
+                if step.get("type") == "model_output":
+                    for part in step.get("content", []):
+                        if isinstance(part, dict) and part.get("text"):
+                            answer_parts = part["text"]
+                            answer += answer_parts
+            answer = answer.strip()
+        except (AttributeError, TypeError, ValueError):
+            answer = ""
+
+    # The Interactions endpoint can temporarily return 5xx. Fall back to the
+    # standard generateContent endpoint so the farmer can still get an answer.
+    if not answer and response.status_code not in (401, 403, 429):
+        fallback_body = {
+            "systemInstruction": {"parts": [{"text": SYSTEM + "\\n" + LANGUAGE_INSTRUCTIONS[language] + "\\n" + context}]},
+            "contents": [{"role": "user", "parts": [{"text": "\\n".join(transcript)}]}],
+            "generationConfig": {"temperature": 0.4, "maxOutputTokens": 300}
+        }
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=55.0, write=15.0, pool=10.0)) as client:
+                fallback = await client.post(
+                    GENERATE_URL.format(model=MODEL),
+                    headers={"x-goog-api-key": KEY, "Content-Type": "application/json"},
+                    json=fallback_body,
+                )
+            if fallback.status_code == 200:
+                payload_out = fallback.json()
+                answer = "".join(
+                    part.get("text", "")
+                    for candidate in payload_out.get("candidates", [])
+                    for part in candidate.get("content", {}).get("parts", [])
+                    if isinstance(part, dict)
+                ).strip()
+            elif fallback.status_code in (401, 403):
+                raise HTTPException(502, "Gemini API kaliti noto'g'ri yoki loyiha ruxsati yoqilmagan.")
+            elif fallback.status_code == 429:
+                raise HTTPException(503, "Gemini so'rov limiti vaqtincha tugadi. Keyinroq urinib ko'ring.")
+        except httpx.TimeoutException:
+            raise HTTPException(504, "Gemini javobi vaqtida kelmadi. Keyinroq qayta urinib ko'ring.")
+        except httpx.HTTPError:
+            pass
+
+    if not answer:
+        if response.status_code == 401 or response.status_code == 403:
             raise HTTPException(502, "Gemini API kaliti noto'g'ri yoki loyiha ruxsati yoqilmagan.")
         if response.status_code == 429:
             raise HTTPException(503, "Gemini so'rov limiti vaqtincha tugadi. Keyinroq urinib ko'ring.")
         if response.status_code == 503:
             raise HTTPException(503, "Gemini xizmati vaqtincha band. Birozdan keyin qayta urinib ko'ring.")
-        raise HTTPException(502, f"Gemini Interactions API xatosi (HTTP {response.status_code}).")
-
-    try:
-        data = response.json()
-        steps = data.get("steps", [])
-        answer_parts = []
-        for step in steps:
-            if step.get("type") == "model_output":
-                for part in step.get("content", []):
-                    if isinstance(part, dict) and part.get("text"):
-                        answer_parts.append(part["text"])
-        answer = "".join(answer_parts).strip()
-    except (AttributeError, TypeError, ValueError):
-        raise HTTPException(502, "Gemini javobini o'qib bo'lmadi. Savolni qayta yuboring.")
+        print("Gemini Interactions API error:", response.status_code, response.text[:500], flush=True)
+        raise HTTPException(502, f"Gemini javob bermadi (HTTP {response.status_code}).")
 
     if not answer:
         raise HTTPException(502, "Gemini bo'sh javob qaytardi. Boshqacha savol berib ko'ring.")
