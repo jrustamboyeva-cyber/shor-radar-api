@@ -100,7 +100,7 @@ async def chat(req: Request, payload: dict = Body(...)):
     }
 
     try:
-        timeout = httpx.Timeout(connect=10.0, read=55.0, write=15.0, pool=10.0)
+        timeout = httpx.Timeout(connect=8.0, read=18.0, write=10.0, pool=8.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 INTERACTIONS_URL,
@@ -111,12 +111,12 @@ async def chat(req: Request, payload: dict = Body(...)):
                 json=request_body,
             )
     except httpx.TimeoutException:
-        raise HTTPException(504, "Gemini javobi vaqtida kelmadi. Keyinroq qayta urinib ko'ring.")
+        response = None
     except httpx.HTTPError:
-        raise HTTPException(502, "Gemini xizmatiga ulanishda xatolik yuz berdi.")
+        response = None
 
     answer = ""
-    if response.status_code == 200:
+    if response is not None and response.status_code == 200:
         try:
             data = response.json()
             for step in data.get("steps", []):
@@ -131,14 +131,14 @@ async def chat(req: Request, payload: dict = Body(...)):
 
     # The Interactions endpoint can temporarily return 5xx. Fall back to the
     # standard generateContent endpoint so the farmer can still get an answer.
-    if not answer and response.status_code not in (401, 403, 429):
+    if response is None or (not answer and response.status_code not in (401, 403, 429)):
         fallback_body = {
             "systemInstruction": {"parts": [{"text": SYSTEM + "\n" + LANGUAGE_INSTRUCTIONS[language] + "\n" + context}]},
             "contents": [{"role": "user", "parts": [{"text": "\n".join(transcript)}]}],
             "generationConfig": {"temperature": 0.4, "maxOutputTokens": 300}
         }
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=55.0, write=15.0, pool=10.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=8.0, read=24.0, write=10.0, pool=8.0)) as client:
                 fallback = await client.post(
                     GENERATE_URL.format(model=MODEL),
                     headers={"x-goog-api-key": KEY, "Content-Type": "application/json"},
@@ -162,14 +162,16 @@ async def chat(req: Request, payload: dict = Body(...)):
             pass
 
     if not answer:
-        if response.status_code == 401 or response.status_code == 403:
+        upstream_status = response.status_code if response is not None else 0
+        if upstream_status == 401 or upstream_status == 403:
             raise HTTPException(502, "Gemini API kaliti noto'g'ri yoki loyiha ruxsati yoqilmagan.")
-        if response.status_code == 429:
+        if upstream_status == 429:
             raise HTTPException(503, "Gemini so'rov limiti vaqtincha tugadi. Keyinroq urinib ko'ring.")
-        if response.status_code == 503:
+        if upstream_status == 503:
             raise HTTPException(503, "Gemini xizmati vaqtincha band. Birozdan keyin qayta urinib ko'ring.")
-        print("Gemini Interactions API error:", response.status_code, response.text[:500], flush=True)
-        raise HTTPException(502, f"Gemini javob bermadi (HTTP {response.status_code}).")
+        if response is not None:
+            print("Gemini Interactions API error:", response.status_code, response.text[:300], flush=True)
+        raise HTTPException(502, "Gemini javob bermadi yoki xizmatga ulanib bo'lmadi.")
 
     if not answer:
         raise HTTPException(502, "Gemini bo'sh javob qaytardi. Boshqacha savol berib ko'ring.")
