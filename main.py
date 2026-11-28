@@ -120,18 +120,57 @@ async def verify_integrations():
     if CID.strip() and SEC.strip():
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=5.0)) as client:
-                response = await client.post(
+                token_response = await client.post(
                     TOKEN_URL,
                     data={"grant_type": "client_credentials", "client_id": CID, "client_secret": SEC},
                 )
-            results["copernicus"] = {
-                "status": "verified" if response.status_code == 200 else "error",
-                "verified": response.status_code == 200,
-                "http_status": response.status_code
-            }
+                if token_response.status_code != 200:
+                    results["copernicus"] = {
+                        "status": "auth_error",
+                        "verified": False,
+                        "http_status": token_response.status_code
+                    }
+                else:
+                    access_token = token_response.json().get("access_token")
+                    now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+                    start = now - dt.timedelta(days=30)
+                    probe = {
+                        "input": {
+                            "bounds": {
+                                "bbox": [69.1993, 41.2995, 69.2007, 41.3005],
+                                "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"}
+                            },
+                            "data": [{"type": "sentinel-2-l2a", "dataFilter": {"maxCloudCoverage": 40}}]
+                        },
+                        "aggregation": {
+                            "timeRange": {"from": start.isoformat().replace("+00:00", "Z"),
+                                          "to": now.isoformat().replace("+00:00", "Z")},
+                            "aggregationInterval": {"of": "P30D"},
+                            "evalscript": EVALSCRIPT,
+                            "resx": 0.0001,
+                            "resy": 0.0001
+                        }
+                    }
+                    stats_response = await client.post(
+                        STAT_URL,
+                        json=probe,
+                        headers={"Authorization": "Bearer " + access_token}
+                    )
+                    has_data = False
+                    if stats_response.status_code == 200:
+                        try:
+                            has_data = bool(stats_response.json().get("data"))
+                        except (ValueError, AttributeError):
+                            has_data = False
+                    results["copernicus"] = {
+                        "status": "verified" if stats_response.status_code == 200 else "error",
+                        "verified": stats_response.status_code == 200,
+                        "http_status": stats_response.status_code,
+                        "probe_has_data": has_data
+                    }
         except httpx.TimeoutException:
             results["copernicus"] = {"status": "timeout", "verified": False}
-        except httpx.HTTPError:
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
             results["copernicus"] = {"status": "unreachable", "verified": False}
 
     return {"checked_at": dt.datetime.now(dt.timezone.utc).isoformat(), "integrations": results}
