@@ -55,7 +55,7 @@ def health():
 def integration_health():
     # Never return credentials or connection strings from this public endpoint.
     gemini_key = bool(os.environ.get("GEMINI_API_KEY", "").strip())
-    gemini_model = os.environ.get("GEMINI_MODEL", "gemini-flash-latest").strip()
+    gemini_model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip()
     copernicus_credentials = bool(CID.strip() and SEC.strip())
     database_url = os.environ.get("DATABASE_URL", "").strip()
 
@@ -100,7 +100,7 @@ async def verify_integrations():
     model = os.environ.get("GEMINI_MODEL", "gemini-flash-latest").strip()
     if gemini_key:
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=5.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(35.0, connect=8.0)) as client:
                 response = await client.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                     headers={"x-goog-api-key": gemini_key, "Content-Type": "application/json"},
