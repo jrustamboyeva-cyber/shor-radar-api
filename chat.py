@@ -110,7 +110,8 @@ async def chat(req: Request, payload: dict = Body(...)):
         raise HTTPException(502, "Gemini xizmatiga ulanishda xatolik yuz berdi.")
 
     if response.status_code != 200:
-        # Do not expose API key or raw provider response to the app/user.
+        # Log Google's diagnostic response for Render logs; never log request headers or API key.
+        print("Gemini API error:", response.status_code, response.text[:1500], flush=True)
         if response.status_code in (401, 403):
             raise HTTPException(502, "Gemini API kaliti noto'g'ri yoki API ruxsati yoqilmagan.")
         if response.status_code == 429:
