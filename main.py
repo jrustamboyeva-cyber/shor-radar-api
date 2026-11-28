@@ -23,10 +23,10 @@ _cache = {}
 
 EVALSCRIPT = """//VERSION=3
 function setup(){return{input:[{bands:["B03","B04","B08","SCL","dataMask"]}],
-output:[{id:"si",bands:1},{id:"ndvi",bands:1},{id:"dataMask",bands:1}]}}
+output:[{id:"si",bands:1},{id:"ndvi",bands:1},{id:"dataMask",bands:["si","ndvi"]}]}}
 function evaluatePixel(s){
  var ok=s.dataMask==1&&[3,8,9,10,11].indexOf(s.SCL)<0?1:0;
- return{si:[Math.sqrt(s.B03*s.B04)],ndvi:[(s.B08-s.B04)/(s.B08+s.B04+1e-6)],dataMask:[ok]}}"""
+ return{si:[Math.sqrt(s.B03*s.B04)],ndvi:[(s.B08-s.B04)/(s.B08+s.B04+1e-6)],dataMask:[ok,ok]}}"""
 
 async def token():
     if _tok["v"] and time.time() < _tok["exp"] - 60:
