@@ -6,7 +6,7 @@ router = APIRouter()
 
 # Gemini API key is stored in Render Environment Variables.
 KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip()
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest").strip()
 LIMIT = int(os.environ.get("CHAT_DAILY_LIMIT", "15"))
 
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
