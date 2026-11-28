@@ -4,12 +4,10 @@ from fastapi import APIRouter, Body, HTTPException, Request
 
 router = APIRouter()
 
-# Gemini API key is stored in Render Environment Variables.
 KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip()
 LIMIT = int(os.environ.get("CHAT_DAILY_LIMIT", "15"))
-
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 _cnt = {}
 
 SYSTEM = (
@@ -73,7 +71,7 @@ async def chat(req: Request, payload: dict = Body(...)):
         )
     )
 
-    contents = []
+    transcript = []
     history = payload.get("history") or []
     if isinstance(history, list):
         for item in history[-6:]:
@@ -82,35 +80,26 @@ async def chat(req: Request, payload: dict = Body(...)):
             role = item.get("role")
             message = item.get("content") or item.get("text")
             if role in ("user", "assistant") and message:
-                contents.append({
-                    "role": "user" if role == "user" else "model",
-                    "parts": [{"text": str(message)[:600]}],
-                })
+                transcript.append(
+                    ("Fermer" if role == "user" else "Sho'r Agronom")
+                    + ": " + str(message)[:600]
+                )
 
-    # Gemini conversation history must begin with a user message.
-    while contents and contents[0]["role"] != "user":
-        contents.pop(0)
-
-    # Avoid duplicating the current question if it is already the last history item.
-    if contents and contents[-1]["role"] == "user":
-        last_text = contents[-1]["parts"][0]["text"].strip()
-        if last_text == question:
-            contents.pop()
-    contents.append({"role": "user", "parts": [{"text": question}]})
+    if not transcript or not transcript[-1].endswith(question):
+        transcript.append("Fermer: " + question)
 
     request_body = {
-        "system_instruction": {
-            "parts": [{"text": SYSTEM + "\n" + LANGUAGE_INSTRUCTIONS[language] + "\n" + context}]
-        },
-        "contents": contents,
-        "generationConfig": {
+        "model": MODEL,
+        "system_instruction": SYSTEM + "\n" + LANGUAGE_INSTRUCTIONS[language] + "\n" + context,
+        "input": "\n".join(transcript),
+        "generation_config": {
             "temperature": 0.4,
-            "maxOutputTokens": 300,
-        },
+            "max_output_tokens": 300
+        }
     }
 
     try:
-        timeout = httpx.Timeout(connect=10.0, read=60.0, write=15.0, pool=10.0)
+        timeout = httpx.Timeout(connect=10.0, read=55.0, write=15.0, pool=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 GEMINI_URL,
@@ -121,23 +110,31 @@ async def chat(req: Request, payload: dict = Body(...)):
                 json=request_body,
             )
     except httpx.TimeoutException:
-        raise HTTPException(504, "Gemini javobi vaqtida kelmadi. Qayta urinib ko'ring.")
+        raise HTTPException(504, "Gemini javobi vaqtida kelmadi. Keyinroq qayta urinib ko'ring.")
     except httpx.HTTPError:
         raise HTTPException(502, "Gemini xizmatiga ulanishda xatolik yuz berdi.")
 
     if response.status_code != 200:
-        print("Gemini API error:", response.status_code, response.text[:1500], flush=True)
+        print("Gemini Interactions API error:", response.status_code, response.text[:1500], flush=True)
         if response.status_code in (401, 403):
-            raise HTTPException(502, "Gemini API kaliti noto'g'ri yoki API ruxsati yoqilmagan.")
+            raise HTTPException(502, "Gemini API kaliti noto'g'ri yoki loyiha ruxsati yoqilmagan.")
         if response.status_code == 429:
             raise HTTPException(503, "Gemini so'rov limiti vaqtincha tugadi. Keyinroq urinib ko'ring.")
-        raise HTTPException(502, f"Gemini xizmati xatolik qaytardi (HTTP {response.status_code}).")
+        if response.status_code == 503:
+            raise HTTPException(503, "Gemini xizmati vaqtincha band. Birozdan keyin qayta urinib ko'ring.")
+        raise HTTPException(502, f"Gemini Interactions API xatosi (HTTP {response.status_code}).")
 
     try:
         data = response.json()
-        parts = data["candidates"][0]["content"]["parts"]
-        answer = "".join(part.get("text", "") for part in parts).strip()
-    except (KeyError, IndexError, TypeError, ValueError):
+        steps = data.get("steps", [])
+        answer_parts = []
+        for step in steps:
+            if step.get("type") == "model_output":
+                for part in step.get("content", []):
+                    if isinstance(part, dict) and part.get("text"):
+                        answer_parts.append(part["text"])
+        answer = "".join(answer_parts).strip()
+    except (AttributeError, TypeError, ValueError):
         raise HTTPException(502, "Gemini javobini o'qib bo'lmadi. Savolni qayta yuboring.")
 
     if not answer:
