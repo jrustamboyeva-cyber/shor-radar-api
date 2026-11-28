@@ -84,7 +84,7 @@ def integration_health():
         "note": "configured faqat sozlama mavjudligini bildiradi. Tashqi xizmatning ishlashi ushbu endpointda jonli tekshirilmaydi. Ma'lumotlar bazasi mavjudligi ham ma'lumotlar saqlanib qolishini kafolatlamaydi."
     }
 
-@app.post("/health/verify")
+@app.api_route("/health/verify", methods=["GET", "POST"])
 async def verify_integrations():
     """On-demand upstream checks. Secrets are never returned or logged."""
     results = {
