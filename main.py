@@ -42,13 +42,6 @@ async def token():
     _tok.update(v=j["access_token"], exp=time.time() + j.get("expires_in", 300))
     return _tok["v"]
 
-def level(si, ndvi):
-    # Taxminiy qoida: ochiq tuproq + yuqori yorqinlik = sho'r. EC o'lchovi o'rnini bosmaydi.
-    if ndvi > 0.5:
-        return "Past", 1.5
-    if si < 0.16: return "Past", 1.5
-    if si < 0.24: return "Oʻrta", 4.0
-    return "Yuqori", 8.0
 
 @app.get("/")
 def root():
