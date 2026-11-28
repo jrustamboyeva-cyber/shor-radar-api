@@ -1,15 +1,47 @@
-import os, time
+import os
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Request
+
+from security import DailyCounter, client_ip
 
 router = APIRouter()
 
 KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip()
-LIMIT = int(os.environ.get("CHAT_DAILY_LIMIT", "15"))
+# Matches the FREE plan promise in the apps (10 questions per day).
+LIMIT = int(os.environ.get("CHAT_DAILY_LIMIT", "10"))
 INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-_cnt = {}
+_cnt = DailyCounter()
+
+ERRORS = {
+    "no_key": {"uz": "AI hozircha ulanmagan: serverda GEMINI_API_KEY sozlanmagan.",
+               "ru": "ИИ пока не подключён: на сервере не задан GEMINI_API_KEY.",
+               "kaa": "AI házirshe jalǵanbaǵan: serverde GEMINI_API_KEY sazlanbaǵan."},
+    "limit": {"uz": "Kunlik savol limiti tugadi. Ertaga yana urinib ko‘ring.",
+              "ru": "Дневной лимит вопросов исчерпан. Попробуйте завтра.",
+              "kaa": "Kúnlik soraw limiti tawsıldı. Erteń qayta urınıp kóriń."},
+    "empty": {"uz": "Savol bo‘sh.", "ru": "Вопрос пустой.", "kaa": "Soraw bos."},
+    "bad_key": {"uz": "Gemini API kaliti noto‘g‘ri yoki loyiha ruxsati yoqilmagan.",
+                "ru": "Ключ Gemini API неверный или доступ проекта не включён.",
+                "kaa": "Gemini API gilti nadurıs yamasa joybar ruxsatı qosılmaǵan."},
+    "quota": {"uz": "Gemini so‘rov limiti vaqtincha tugadi. Keyinroq urinib ko‘ring.",
+              "ru": "Лимит запросов Gemini временно исчерпан. Попробуйте позже.",
+              "kaa": "Gemini soraw limiti waqıtsha tawsıldı. Keyinirek urınıp kóriń."},
+    "busy": {"uz": "Gemini xizmati vaqtincha band. Birozdan keyin qayta urinib ko‘ring.",
+             "ru": "Сервис Gemini временно перегружен. Повторите попытку чуть позже.",
+             "kaa": "Gemini xızmeti waqıtsha bánt. Azdan keyin qayta urınıp kóriń."},
+    "timeout": {"uz": "Gemini javobi vaqtida kelmadi. Qayta urinib ko‘ring.",
+                "ru": "Gemini не ответил вовремя. Попробуйте ещё раз.",
+                "kaa": "Gemini juwabı waqtında kelmedi. Qayta urınıp kóriń."},
+    "failed": {"uz": "Gemini javob bermadi yoki xizmatga ulanib bo‘lmadi.",
+               "ru": "Gemini не ответил или сервис недоступен.",
+               "kaa": "Gemini juwap bermedi yamasa xızmetke jalǵanıw múmkin bolmadı."},
+}
+
+
+def _err(status: int, code: str, language: str):
+    raise HTTPException(status, ERRORS[code].get(language, ERRORS[code]["uz"]))
 
 SYSTEM = (
     "Sen SHO'R RADAR platformasining Sho'r Agronom yordamchisisan. "
@@ -31,40 +63,30 @@ LANGUAGE_INSTRUCTIONS = {
 
 @router.post("/chat")
 async def chat(req: Request, payload: dict = Body(...)):
-    if not KEY:
-        raise HTTPException(503, "Gemini API kaliti sozlanmagan: GEMINI_API_KEY")
-
-    ip = (
-        req.headers.get("x-forwarded-for")
-        or (req.client.host if req.client else "?")
-    ).split(",")[0].strip()
-    day_key = ip + time.strftime("%Y%m%d")
-
-    if _cnt.get(day_key, 0) >= LIMIT:
-        raise HTTPException(429, "Kunlik savol limiti tugadi. Ertaga yana urinib ko'ring.")
-
-    question = str(payload.get("q", ""))[:500].strip()
-    if not question:
-        raise HTTPException(400, "Savol bo'sh")
-
-    # Count attempts before calling the paid upstream API, including failed attempts.
-    if len(_cnt) > 10000:
-        today_suffix = time.strftime("%Y%m%d")
-        for key in list(_cnt):
-            if not key.endswith(today_suffix):
-                _cnt.pop(key, None)
-    _cnt[day_key] = _cnt.get(day_key, 0) + 1
-
     language = str(payload.get("language", "uz")).lower().strip()
     if language not in LANGUAGE_INSTRUCTIONS:
         language = "uz"
+    if not KEY:
+        _err(503, "no_key", language)
+
+    day_key = client_ip(req)
+    if _cnt.get(day_key) >= LIMIT:
+        _err(429, "limit", language)
+
+    question = str(payload.get("q", ""))[:500].strip()
+    if not question:
+        _err(400, "empty", language)
+
+    # Count attempts before calling the paid upstream API, including failed attempts.
+    _cnt.increment(day_key)
 
     field = payload.get("field") or {}
     if not isinstance(field, dict):
         field = {}
     context = (
         "Dala ma'lumotlari: nomi=%s, ekin=%s, maydon=%s ga, viloyat=%s, "
-        "EC=%s dS/m, manba=%s, ma'lumot holati=%s, koordinatalar=%s,%s, NDVI=%s, SI=%s."
+        "EC=%s dS/m, manba=%s, ma'lumot holati=%s, koordinatalar=%s,%s, NDVI=%s, SI=%s, NDMI=%s, "
+        "sun'iy yo'ldosh davri=%s kun, tuproq=%s, drenaj=%s, sizot suvi=%s m."
         % (
             field.get("n") or "ko'rsatilmagan",
             field.get("c") or "ko'rsatilmagan",
@@ -77,6 +99,11 @@ async def chat(req: Request, payload: dict = Body(...)):
             field.get("lon", "mavjud emas"),
             field.get("ndvi", "mavjud emas"),
             field.get("si", "mavjud emas"),
+            field.get("ndmi", "mavjud emas"),
+            field.get("period_days", "mavjud emas"),
+            field.get("soil") or "ko'rsatilmagan",
+            field.get("drainage") or "ko'rsatilmagan",
+            field.get("groundwater_m", "mavjud emas"),
         )
     )
 
@@ -86,8 +113,10 @@ async def chat(req: Request, payload: dict = Body(...)):
         for item in history[-6:]:
             if not isinstance(item, dict):
                 continue
-            role = item.get("role")
+            role = {"bot": "assistant"}.get(item.get("role"), item.get("role"))
             message = item.get("content") or item.get("text")
+            if item.get("error"):
+                continue  # never feed client-side error notices back to the model
             if role in ("user", "assistant") and message:
                 transcript.append(
                     ("Fermer" if role == "user" else "Sho'r Agronom")
@@ -161,27 +190,26 @@ async def chat(req: Request, payload: dict = Body(...)):
                     if isinstance(part, dict)
                 ).strip()
             elif fallback.status_code in (401, 403):
-                raise HTTPException(502, "Gemini API kaliti noto'g'ri yoki loyiha ruxsati yoqilmagan.")
+                _err(502, "bad_key", language)
             elif fallback.status_code == 429:
-                raise HTTPException(503, "Gemini so'rov limiti vaqtincha tugadi. Keyinroq urinib ko'ring.")
+                _err(503, "quota", language)
+            else:
+                print("Gemini generateContent error:", fallback.status_code, fallback.text[:300], flush=True)
         except httpx.TimeoutException:
-            raise HTTPException(504, "Gemini javobi vaqtida kelmadi. Keyinroq qayta urinib ko'ring.")
+            _err(504, "timeout", language)
         except httpx.HTTPError:
             pass
 
     if not answer:
         upstream_status = response.status_code if response is not None else 0
         if upstream_status == 401 or upstream_status == 403:
-            raise HTTPException(502, "Gemini API kaliti noto'g'ri yoki loyiha ruxsati yoqilmagan.")
+            _err(502, "bad_key", language)
         if upstream_status == 429:
-            raise HTTPException(503, "Gemini so'rov limiti vaqtincha tugadi. Keyinroq urinib ko'ring.")
+            _err(503, "quota", language)
         if upstream_status == 503:
-            raise HTTPException(503, "Gemini xizmati vaqtincha band. Birozdan keyin qayta urinib ko'ring.")
+            _err(503, "busy", language)
         if response is not None:
             print("Gemini Interactions API error:", response.status_code, response.text[:300], flush=True)
-        raise HTTPException(502, "Gemini javob bermadi yoki xizmatga ulanib bo'lmadi.")
+        _err(502, "failed", language)
 
-    if not answer:
-        raise HTTPException(502, "Gemini bo'sh javob qaytardi. Boshqacha savol berib ko'ring.")
-
-    return {"answer": answer, "left": max(0, LIMIT - _cnt[day_key])}
+    return {"answer": answer, "left": max(0, LIMIT - _cnt.get(day_key)), "model": MODEL}
