@@ -1,5 +1,10 @@
+from pathlib import Path
+import sys
+
 from fastapi.testclient import TestClient
 
+# Ensure the repository root (where main.py lives) is importable under pytest.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import main
 
 
