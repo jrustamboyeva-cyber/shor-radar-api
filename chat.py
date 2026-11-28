@@ -45,14 +45,15 @@ async def chat(req: Request, payload: dict = Body(...)):
     field = payload.get("field") or {}
     context = (
         "Dala ma'lumotlari: nomi=%s, ekin=%s, maydon=%s ga, viloyat=%s, "
-        "EC=%s dS/m%s."
+        "EC=%s dS/m, manba=%s, ma'lumot holati=%s."
         % (
-            field.get("n"),
-            field.get("c"),
-            field.get("ga"),
-            field.get("r"),
-            field.get("ec"),
-            " (Sentinel-2 asosida taxminiy)" if field.get("sat") else " (namunaviy)",
+            field.get("n") or "ko'rsatilmagan",
+            field.get("c") or "ko'rsatilmagan",
+            field.get("ga") or "ko'rsatilmagan",
+            field.get("r") or "ko'rsatilmagan",
+            field.get("ec") if field.get("ec") is not None else "mavjud emas",
+            field.get("ec_source") or "ko'rsatilmagan",
+            field.get("ec_status") or "mavjud emas",
         )
     )
 
