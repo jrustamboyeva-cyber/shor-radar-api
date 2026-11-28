@@ -100,7 +100,7 @@ async def chat(req: Request, payload: dict = Body(...)):
 
     request_body = {
         "system_instruction": {
-            "parts": [{"text": SYSTEM + "\\n" + LANGUAGE_INSTRUCTIONS[language] + "\\n" + context}]
+            "parts": [{"text": SYSTEM + "\n" + LANGUAGE_INSTRUCTIONS[language] + "\n" + context}]
         },
         "contents": contents,
         "generationConfig": {
