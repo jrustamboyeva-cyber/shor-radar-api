@@ -97,19 +97,32 @@ async def verify_integrations():
     }
 
     gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    model = os.environ.get("GEMINI_MODEL", "gemini-flash-latest").strip()
+    model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip()
     if gemini_key:
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(35.0, connect=8.0)) as client:
                 response = await client.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                    "https://generativelanguage.googleapis.com/v1beta/interactions",
                     headers={"x-goog-api-key": gemini_key, "Content-Type": "application/json"},
-                    json={"contents": [{"role": "user", "parts": [{"text": "Reply with OK."}]}],
-                          "generationConfig": {"maxOutputTokens": 4, "temperature": 0}},
+                    json={
+                        "model": model,
+                        "input": "Reply with OK.",
+                        "generation_config": {"max_output_tokens": 4, "temperature": 0}
+                    },
                 )
+            verified = False
+            if response.status_code == 200:
+                try:
+                    verified = any(
+                        step.get("type") == "model_output"
+                        and any(part.get("text") for part in step.get("content", []) if isinstance(part, dict))
+                        for step in response.json().get("steps", [])
+                    )
+                except (ValueError, AttributeError, TypeError):
+                    verified = False
             results["gemini"] = {
-                "status": "verified" if response.status_code == 200 else "error",
-                "verified": response.status_code == 200,
+                "status": "verified" if verified else "error",
+                "verified": verified,
                 "http_status": response.status_code
             }
         except httpx.TimeoutException:
